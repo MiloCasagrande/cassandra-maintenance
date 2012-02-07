@@ -1,0 +1,18 @@
+= Simple Cassandra Maintenance Script =
+
+This is a simple Cassandra maintenance script meant to be run as a cron job
+
+The script performs 3 basic operation that should be automated in a Cassandra
+ring. The operations are:
+- repair
+- compact
+- cleanup
+
+The script should be run preferably between two gc_grace_period timeframe, in
+order to make sure that the entire ring is in a good shape (basically that
+deletes have been propagated).
+
+By default it logs messages in '/var/log/cassandra/', in the file
+'maintenance.log'. The log directory can be passed as an argument to the script
+
+For more info, use 'cassandra-maintenance -h'.
