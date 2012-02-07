@@ -1,0 +1,305 @@
+#!/bin/bash
+
+# Copyright 2012, Milo Casagrande
+#
+#   Licensed under the Apache License, Version 2.0 (the "License");
+#   you may not use this file except in compliance with the License.
+#   You may obtain a copy of the License at
+#
+#       http://www.apache.org/licenses/LICENSE-2.0
+#
+#   Unless required by applicable law or agreed to in writing, software
+#   distributed under the License is distributed on an "AS IS" BASIS,
+#   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#   See the License for the specific language governing permissions and
+#   limitations under the License.
+
+#*****************************************************************************#
+#                                                                             #
+# cassandra-maintenance                                                       #
+# Written by Milo Casagrande                                                  #
+#                                                                             #
+# Perform maintanance operation on a Cassandra node.                          #
+# The operations are, in order: repair, compact, cleanup                      #
+#                                                                             #
+#*****************************************************************************#
+
+# The name of the script
+NAME=`basename $0 .sh`
+
+# This is the default command, assuming it is in the PATH
+COMMAND_NAME=nodetool
+
+# Default JMX port
+JMX_PORT=8080
+
+# Default host IP address where the operations will be executed
+HOST=`hostname -i`
+
+# Logging directory and file
+LOG_DIR=/var/log/cassandra
+LOG_FILE=maintenance.log
+
+# Date format string used in the log
+DATE_FORMAT_STRING="%Y-%m-%d--%T:%N"
+
+#*****************************************************************************#
+#                                                                             #
+# Execute the repair on the keyspace and optional column families             #
+# Parameter: $1 (the column family)                                           #
+# Returns: 0 on success, 1 if something went wrong                            #
+#                                                                             #
+#*****************************************************************************#
+function repair() {
+    if [ -z ${1} ]; then
+        log "Executing repair operation"
+        ${COMMAND_LINE} repair ${KEYSPACE} &>/dev/null && return 0
+    else
+        log "Executing repair operation on '${1}' column family"
+        ${COMMAND_LINE} repair ${KEYSPACE} ${1} &>/dev/null && return 0
+    fi
+
+    log "Repair operation did not work as expected"
+    return 1
+}
+
+#*****************************************************************************#
+#                                                                             #
+# Execute the compact on the keyspace and optional column families            #
+# Parameter: $1 (the column family)                                           #
+# Returns: 0 on success, 1 if something went wrong                            #
+#                                                                             #
+#*****************************************************************************#
+function compact() {
+    if [ -z ${1} ]; then
+        log "Executing compact operation"
+        ${COMMAND_LINE} compact ${KEYSPACE} &>/dev/null && return 0
+    else
+        log "Executing compact operation on '${1}' column family"
+        ${COMMAND_LINE} compact ${KEYSPACE} ${1} &>/dev/null && return 0
+    fi
+
+    log "Compact operation did not work as expected"
+    return 1
+}
+
+#*****************************************************************************#
+#                                                                             #
+# Execute the cleanup on the keyspace and optional column familes             #
+# Parameter: $1 (the column family)                                           #
+# Returns: 0 on success, 1 if something went wrong                            #
+#                                                                             #
+#*****************************************************************************#
+function cleanup() {
+    if [ -z ${1} ]; then
+        log "Executing cleanup operation"
+        ${COMMAND_LINE} cleanup ${KEYSPACE} &>/dev/null && return 0
+    else
+        log "Executing cleanup operation on '${1}' column family"
+        ${COMMAND_LINE} cleanup ${KEYSPACE} ${1} &>/dev/null && return 0
+    fi
+
+    log "Cleanup operation did not work as expected"
+    return 1
+}
+
+#*****************************************************************************#
+#                                                                             #
+# Check that we have the nodetool command on the PATH                         #
+# First check that the CASSANDRA_DIR variable has not been defined            #
+#                                                                             #
+#*****************************************************************************#
+function check_cassandra_path() {
+    if [ -z ${CASSANDRA_DIR} ]; then
+        CASS_PATH=`which nodetool` &>/dev/null
+
+        if [[ $? -eq 1 ]]; then
+            log "WARNING: 'nodetool' command not found in PATH.\n"
+            log "Please define the Cassandra directory with the '-d' option."
+            log "Aborting.\n"
+            exit 1
+        fi
+    fi
+}
+
+#*****************************************************************************#
+#                                                                             #
+# Simple function to make up the base of the command line                     #
+#                                                                             #
+#*****************************************************************************#
+function compose_command_line() {
+    COMMAND_LINE="${COMMAND_NAME} -h ${HOST} -p ${JMX_PORT}"
+}
+
+#*****************************************************************************#
+#                                                                             #
+# Print usage information                                                     #
+#                                                                             #
+#*****************************************************************************#
+function usage() {
+cat << EOF
+usage: ${NAME} -k KEYSPACE [OPTIONS]
+
+Execute maintanence operation on a Cassandra node on the specified KEYSPACE. By
+default the node is the actual machine, and all the comulmn families will be
+affected.
+
+Options:
+-c COL      The column family to execute the operation against.
+            Multiple column families have to been defined with multiple options
+            (-c COL1 -c COL2 ...).
+-d DIR      Define the directory where Cassandra is installed. This is the path
+            to the root directory (not the 'bin/' one).
+-f FILE     Read column families names from FILE. FILE has to be a simple text
+            file with one column families name per line.
+-h          Print this help message.
+-l          The log directory to store output messages from the script. Default
+            is '${LOG_DIR}'.
+-k KEYSPACE The Cassandra KEYSPACE to run the operation against.
+-p PORT     The JMX port to use. Default is ${JMX_PORT}.
+-s HOST     The IP or URL of the host where the maintanance command should be
+            run. Default is the actual host IP address.
+EOF
+}
+
+#*****************************************************************************#
+#                                                                             #
+# Check that the log directory exists, if not create it                       #
+#                                                                             #
+#*****************************************************************************#
+function check_log() {
+    if [ ! -d ${LOG_DIR} ]; then
+        mkdir -p ${LOG_DIR}
+    fi
+}
+
+#*****************************************************************************#
+#                                                                             #
+# Write the message in the log                                                #
+# Parameter: $1 the message to write                                          #
+#                                                                             #
+#*****************************************************************************#
+function log() {
+    LOG_STRING=`date +${DATE_FORMAT_STRING}`
+    LOG_STRING=${LOG_STRING}"\t${1}"
+    echo -e ${LOG_STRING}>>${LOG_DIR}/${LOG_FILE}
+}
+
+#*****************************************************************************#
+#                                                                             #
+# Read the txt file with the name of column families                          #
+# No assumption are made on the file passed, it has to be one column per line #
+# Parameter: $1 the file to read                                              #
+#                                                                             #
+#*****************************************************************************#
+function read_file() {
+    if [[ -f ${1} ]] && [[ -r ${1} ]]; then
+        exec 10<&0
+        exec < ${1}
+        count=0
+        while read LINE; do
+            if [ -n ${LINE} ]; then
+                COLUMN_FAMILIES[${count}]=${LINE}
+            fi
+            count=$[count + 1]
+        done
+        exec 0<&10 10<&-
+    else
+        log "WARNING: File '${1}' does not exist, or is not readable."
+        log "Aborting.\n"
+        exit 1
+    fi
+}
+
+#*****************************************************************************#
+#                                                                             #
+# Execute the actual operation of repair, compact, and cleanup                #
+#                                                                             #
+#*****************************************************************************#
+function execute() {
+    if [ -z ${COLUMN_FAMILIES} ]; then
+        repair && compact && cleanup && return 0
+    else
+        i=0
+        while [ $i -lt ${#COLUMN_FAMILIES[*]} ]; do
+            COLUMN=${COLUMN_FAMILIES[$i]}
+            i=$[i + 1]
+            repair ${COLUMN} && compact ${COLUMN} && cleanup ${COLUMN}
+        done
+        [ $? -eq 0 ] && return 0
+    fi
+
+    log "WARNING: Maintenance executed with errors"
+    return 1
+}
+
+#
+# Options string with the necessary arguments to be parsed
+# 'c': the column family to run the operation against
+# 'd': the directory where cassandra is installed, in case it is not in the PATH
+# 'f': file to read the column families from
+# 'h': print the help
+# 'l': the log directory
+# 'k': the keyspace
+# 'p': the JMX port of the host
+# 's': the IP address or URL of the host
+#
+OPTIONS="c:d:f:hl:k:p:s:"
+
+index=0
+while getopts $OPTIONS option; do
+    case $option in
+        c)
+        COLUMN_FAMILIES[$index]=${OPTARG}
+        index=$[index + 1]
+        ;;
+        d)
+        # CASSANDRA_DIR is needed also for another check
+        CASSANDRA_DIR=${OPTARG}
+        COMMAND_NAME=${CASSANDRA_DIR}/bin/nodetool
+        ;;
+        f)
+        READ_FILE=${OPTARG}
+        ;;
+        h)
+        usage
+        exit 0
+        ;;
+        l)
+        LOG_DIR=${OPTARG}
+        ;;
+        k)
+        KEYSPACE=${OPTARG}
+        ;;
+        s)
+        HOST=${OPTARG}
+        ;;
+        p)
+        JMX_PORT=${OPTARG}
+        ;;
+        ?|*)
+        log "Unrecognized option.\nAborting.\n"
+        usage
+        exit 1
+        ;;
+    esac
+done
+
+check_cassandra_path
+
+if [ -z $KEYSPACE ]; then
+    log "It is necessary to define the keyspace.\nAborting.\n"
+    usage
+    exit 1
+fi
+
+if [ -n ${READ_FILE} ]; then
+    read_file ${READ_FILE}
+fi
+
+compose_command_line
+check_log
+
+log "Starting Cassandra maintenance operations"
+execute
+log "Cassandra maintenance operations terminated"
