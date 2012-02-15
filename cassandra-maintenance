@@ -287,13 +287,13 @@ done
 
 check_cassandra_path
 
-if [ -z $KEYSPACE ]; then
+if [ -z ${KEYSPACE} ]; then
     log "It is necessary to define the keyspace.\nAborting.\n"
     usage
     exit 1
 fi
 
-if [ -n ${READ_FILE} ]; then
+if [ ! -z ${READ_FILE} ]; then
     read_file ${READ_FILE}
 fi
 
